@@ -14,7 +14,8 @@ namespace EmbeddedSenseUsingSessionAuthentication.Controllers
 {
     public class SenseSessionModule
     {
-        private const string RESTURI = "https://zyg-sp4:4243/qps/";
+        private const string RESTURI = "https://zyg-sp4:4243/qps/portal/";
+        private const string QlikSessionKey = "X-Qlik-Portal-Session";
 
         private static string GenerateXrfkey()
         {
@@ -32,6 +33,27 @@ namespace EmbeddedSenseUsingSessionAuthentication.Controllers
 
         private static bool CheckValidationResult(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors) { return true; }
 
+        private static WebRequestHandler CreateWebRequestHandler()
+        {
+            var handler = new WebRequestHandler();
+            handler.ClientCertificateOptions = ClientCertificateOption.Manual;
+            handler.ClientCertificates.Add(new X509Certificate2(@"C:\Users\heave\Documents\client.pfx", "kr",
+                    X509KeyStorageFlags.MachineKeySet));
+            handler.ServerCertificateValidationCallback += CheckValidationResult;
+            handler.UseProxy = false;
+            return handler;
+        }
+
+        private static HttpClient CreateSenseHttpClient(string xrfKey)
+        {
+            var restClient = new HttpClient(CreateWebRequestHandler());
+            restClient.BaseAddress = new Uri(RESTURI);
+            restClient.DefaultRequestHeaders.Accept.Clear();
+            restClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            restClient.DefaultRequestHeaders.Add("X-Qlik-Xrfkey", xrfKey);
+            return restClient;
+        }
+
         public static async Task CreateSession(HttpContextBase httpContext)
         {
             // 生成xrfKey
@@ -43,24 +65,13 @@ namespace EmbeddedSenseUsingSessionAuthentication.Controllers
             reqObject.Add("UserDirectory", "ZYG-SP4");
             reqObject.Add("SessionId", Guid.NewGuid().ToString());
 
-            var handler = new WebRequestHandler();
-            handler.ClientCertificateOptions = ClientCertificateOption.Manual;
-            handler.ClientCertificates.Add(new X509Certificate2(@"C:\Users\heave\Documents\client.pfx", "kr",
-                    X509KeyStorageFlags.MachineKeySet));
-            handler.ServerCertificateValidationCallback += CheckValidationResult;
-            handler.UseProxy = false;
-
-            var restClient = new HttpClient(handler);
-            restClient.BaseAddress = new Uri(RESTURI);
-            restClient.DefaultRequestHeaders.Accept.Clear();
-            restClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            restClient.DefaultRequestHeaders.Add("X-Qlik-Xrfkey", xrfKey);
+            var restClient = CreateSenseHttpClient(xrfKey);
 
             var response = await restClient.PostAsJsonAsync($"session?Xrfkey={xrfKey}", reqObject);
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadAsAsync<Hashtable>();
-                httpContext.Response.SetCookie(new HttpCookie("X-Qlik-Session", result["SessionId"].ToString()));
+                httpContext.Response.SetCookie(new HttpCookie(QlikSessionKey, result["SessionId"].ToString()));
             }
             else
                 throw new Exception($"访问Qlik Sense服务器地址：{RESTURI} 返回错误代码：{response.StatusCode}");
@@ -68,29 +79,18 @@ namespace EmbeddedSenseUsingSessionAuthentication.Controllers
 
         public static async Task DeleteSession(HttpContextBase httpContext)
         {
-            var sessionId = httpContext.Session["X-Qlik-Session"]?.ToString();
+            var sessionId = httpContext.Session[QlikSessionKey]?.ToString();
             if (string.IsNullOrEmpty(sessionId)) return;
 
             // 生成xrfKey
             var xrfKey = GenerateXrfkey();
 
-            var handler = new WebRequestHandler();
-            handler.ClientCertificateOptions = ClientCertificateOption.Manual;
-            handler.ClientCertificates.Add(new X509Certificate2(@"C:\Users\heave\Documents\client.pfx", "kr",
-                    X509KeyStorageFlags.MachineKeySet));
-            handler.ServerCertificateValidationCallback += CheckValidationResult;
-            handler.UseProxy = false;
-
-            var restClient = new HttpClient(handler);
-            restClient.BaseAddress = new Uri(RESTURI);
-            restClient.DefaultRequestHeaders.Accept.Clear();
-            restClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            restClient.DefaultRequestHeaders.Add("X-Qlik-Xrfkey", xrfKey);
+            var restClient = CreateSenseHttpClient(xrfKey);
 
             var response = await restClient.DeleteAsync($"session/{sessionId}?Xrfkey={xrfKey}");
             if (response.IsSuccessStatusCode)
             {
-                httpContext.Response.Cookies.Remove("X-Qlik-Session");
+                httpContext.Response.Cookies.Remove(QlikSessionKey);
             }
             else
                 throw new Exception($"访问Qlik Sense服务器地址：{RESTURI} 返回错误代码：{response.StatusCode}");
