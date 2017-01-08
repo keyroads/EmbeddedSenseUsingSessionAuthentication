@@ -12,7 +12,7 @@ using System.Web;
 
 namespace EmbeddedSenseUsingSessionAuthentication.Controllers
 {
-    public class SenseSessionModule
+    public class SenseAuthModule
     {
         private const string RESTURI = "https://zyg-sp4:4243/qps/portal/";
         private const string QlikSessionKey = "X-Qlik-Portal-Session";
@@ -44,10 +44,10 @@ namespace EmbeddedSenseUsingSessionAuthentication.Controllers
             return handler;
         }
 
-        private static HttpClient CreateSenseHttpClient(string xrfKey)
+        private static HttpClient CreateSenseHttpClient(string xrfKey, string proxyRestUri = RESTURI)
         {
             var restClient = new HttpClient(CreateWebRequestHandler());
-            restClient.BaseAddress = new Uri(RESTURI);
+            restClient.BaseAddress = new Uri(proxyRestUri);
             restClient.DefaultRequestHeaders.Accept.Clear();
             restClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             restClient.DefaultRequestHeaders.Add("X-Qlik-Xrfkey", xrfKey);
@@ -91,6 +91,46 @@ namespace EmbeddedSenseUsingSessionAuthentication.Controllers
             if (response.IsSuccessStatusCode)
             {
                 httpContext.Response.Cookies.Remove(QlikSessionKey);
+            }
+            else
+                throw new Exception($"访问Qlik Sense服务器地址：{RESTURI} 返回错误代码：{response.StatusCode}");
+
+        }
+
+        public static async Task<string> AddTicket(string targetId, string proxyRestUri)
+        {
+            if (string.IsNullOrEmpty(targetId)) throw new Exception($"{nameof(targetId)} is empty");
+            if (string.IsNullOrEmpty(proxyRestUri)) throw new Exception($"{nameof(proxyRestUri)} is empty");
+            
+            // 生成xrfKey
+            var xrfKey = GenerateXrfkey();
+
+            // 生成提交数据 Json格式
+            var reqObject = new Hashtable();
+            reqObject.Add("UserId", "heave");
+            reqObject.Add("UserDirectory", "ZYG-SP4");
+            reqObject.Add("TargetId", targetId);
+
+            var restClient = CreateSenseHttpClient(xrfKey, proxyRestUri);
+
+            var response = await restClient.PostAsJsonAsync($"ticket?Xrfkey={xrfKey}", reqObject);
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadAsAsync<Hashtable>();
+                var ticket = result["Ticket"].ToString();
+                var targetUri = result["TargetUri"].ToString();
+
+                if (string.IsNullOrEmpty(targetUri))
+                    throw new Exception(nameof(targetUri) + " is empty");
+
+                //Add ticket to TargetUri
+                string redirectUrl;
+                if (targetUri.Contains("?"))
+                    redirectUrl = targetUri + "&qlikTicket=" + ticket;
+                else
+                    redirectUrl = targetUri + "?qlikTicket=" + ticket;
+
+                return redirectUrl;
             }
             else
                 throw new Exception($"访问Qlik Sense服务器地址：{RESTURI} 返回错误代码：{response.StatusCode}");

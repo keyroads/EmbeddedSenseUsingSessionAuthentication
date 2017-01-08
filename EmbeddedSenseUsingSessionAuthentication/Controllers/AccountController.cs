@@ -9,6 +9,7 @@ using Microsoft.AspNet.Identity;
 using Microsoft.AspNet.Identity.Owin;
 using Microsoft.Owin.Security;
 using EmbeddedSenseUsingSessionAuthentication.Models;
+using QlikAuthNet;
 
 namespace EmbeddedSenseUsingSessionAuthentication.Controllers
 {
@@ -61,6 +62,18 @@ namespace EmbeddedSenseUsingSessionAuthentication.Controllers
             return View();
         }
 
+        [AllowAnonymous]
+        public async Task<ActionResult> Ticket(string targetId, string proxyRestUri)
+        {
+            if (User.Identity.IsAuthenticated)
+            {
+                return Redirect(await SenseAuthModule.AddTicket(targetId, proxyRestUri));
+            }
+            if (!string.IsNullOrEmpty(targetId) && !string.IsNullOrEmpty(proxyRestUri))
+                Session["SenseTicketModule"] = Tuple.Create(targetId, proxyRestUri);
+            return View("Login");
+        }
+
         //
         // POST: /Account/Login
         [HttpPost]
@@ -79,7 +92,13 @@ namespace EmbeddedSenseUsingSessionAuthentication.Controllers
             switch (result)
             {
                 case SignInStatus.Success:
-                    await SenseSessionModule.CreateSession(HttpContext);
+                    if (Session["SenseTicketModule"] != null)
+                    {
+                        var tuple = (Tuple<string, string>)Session["SenseTicketModule"];
+                        Session["SenseTicketModule"] = null;
+                        return Redirect(await SenseAuthModule.AddTicket(tuple.Item1, tuple.Item2));
+                    }
+                    await SenseAuthModule.CreateSession(HttpContext);
                     return RedirectToLocal(returnUrl);
                 case SignInStatus.LockedOut:
                     return View("Lockout");
@@ -393,7 +412,7 @@ namespace EmbeddedSenseUsingSessionAuthentication.Controllers
         public async Task<ActionResult> LogOff()
         {
             AuthenticationManager.SignOut(DefaultAuthenticationTypes.ApplicationCookie);
-            await SenseSessionModule.DeleteSession(HttpContext);
+            await SenseAuthModule.DeleteSession(HttpContext);
             return RedirectToAction("Index", "Home");
         }
 
